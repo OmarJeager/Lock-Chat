@@ -3,10 +3,10 @@ import React from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { User, Users, Mail, Copy } from "lucide-react";
+import { User, Users, Mail, Copy, Lock, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 
-interface ChatUser {
+export interface ChatUser {
   id: string;
   displayName: string;
   email?: string;
@@ -16,9 +16,17 @@ interface UserSelectorProps {
   users: ChatUser[];
   selectedUser: ChatUser | null;
   onSelectUser: (user: ChatUser | null) => void;
+  selectedDecryptUsers: ChatUser[];
+  onToggleDecryptUser: (user: ChatUser) => void;
 }
 
-export const UserSelector = ({ users, selectedUser, onSelectUser }: UserSelectorProps) => {
+export const UserSelector = ({ 
+  users, 
+  selectedUser, 
+  onSelectUser, 
+  selectedDecryptUsers, 
+  onToggleDecryptUser 
+}: UserSelectorProps) => {
   const getInitials = (name: string) => {
     return name
       .split(" ")
@@ -30,6 +38,10 @@ export const UserSelector = ({ users, selectedUser, onSelectUser }: UserSelector
   const copyEmail = (email: string) => {
     navigator.clipboard.writeText(email);
     toast.success("Email copied to clipboard");
+  };
+
+  const isUserSelectedForDecrypt = (userId: string) => {
+    return selectedDecryptUsers.some(user => user.id === userId);
   };
 
   return (
@@ -53,6 +65,51 @@ export const UserSelector = ({ users, selectedUser, onSelectUser }: UserSelector
         </Tooltip>
       </TooltipProvider>
       
+      <div className="py-2 px-3">
+        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1 mb-1">
+          <Lock className="h-3 w-3" />
+          Decrypt Access
+        </h3>
+        <p className="text-xs text-gray-400 mb-2">Select users who can decrypt your messages</p>
+        
+        <div className="flex flex-wrap gap-1 mb-2">
+          {users.map(user => (
+            <TooltipProvider key={`decrypt-${user.id}`}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => onToggleDecryptUser(user)}
+                    className={`p-1 rounded-full border-2 transition-all ${
+                      isUserSelectedForDecrypt(user.id) 
+                        ? 'border-green-500 bg-green-100 dark:bg-green-900/30' 
+                        : 'border-gray-200 dark:border-gray-700'
+                    }`}
+                  >
+                    <Avatar className="h-6 w-6">
+                      <AvatarFallback className="text-xs">
+                        {getInitials(user.displayName)}
+                      </AvatarFallback>
+                    </Avatar>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {isUserSelectedForDecrypt(user.id) 
+                    ? `${user.displayName} can decrypt your messages` 
+                    : `${user.displayName} cannot decrypt your messages`}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ))}
+        </div>
+      </div>
+      
+      <div className="h-px bg-gray-200 dark:bg-gray-700 my-2" />
+      
+      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 px-3 mb-1 flex items-center gap-1">
+        <User className="h-3 w-3" />
+        Direct Messages
+      </h3>
+      
       {users.map(user => (
         <ContextMenu key={user.id}>
           <ContextMenuTrigger asChild>
@@ -74,6 +131,13 @@ export const UserSelector = ({ users, selectedUser, onSelectUser }: UserSelector
                   </span>
                 )}
               </div>
+              {isUserSelectedForDecrypt(user.id) && (
+                <div className="ml-auto">
+                  <div className="text-green-500 bg-green-100 dark:bg-green-900/30 p-1 rounded-full">
+                    <UserCheck className="h-3 w-3" />
+                  </div>
+                </div>
+              )}
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-64">
@@ -83,6 +147,18 @@ export const UserSelector = ({ users, selectedUser, onSelectUser }: UserSelector
             >
               <User className="h-4 w-4" />
               <span>Message {user.displayName}</span>
+            </ContextMenuItem>
+            
+            <ContextMenuItem 
+              className="flex items-center gap-2 cursor-pointer"
+              onClick={() => onToggleDecryptUser(user)}
+            >
+              <Lock className="h-4 w-4" />
+              <span>
+                {isUserSelectedForDecrypt(user.id) 
+                  ? `Remove decrypt access` 
+                  : `Grant decrypt access`}
+              </span>
             </ContextMenuItem>
             
             {user.email && (

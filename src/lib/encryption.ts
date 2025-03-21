@@ -72,9 +72,16 @@ const phrasePairs = [
   { original: "small", encrypted: "of minimal dimensions" },
 ];
 
+// New types for message encryption
+export interface EncryptionData {
+  text: string;
+  isEncrypted: boolean;
+  allowedUsers?: string[]; // UIDs of users who can decrypt
+}
+
 // Function to encrypt a message (transform to conversational text)
-export const encryptMessage = (text: string): string => {
-  if (!text) return "";
+export const encryptMessage = (text: string, allowedUsers?: string[]): EncryptionData => {
+  if (!text) return { text: "", isEncrypted: false };
   
   let encryptedText = text.toLowerCase();
   
@@ -89,7 +96,7 @@ export const encryptMessage = (text: string): string => {
     // If no match was found, use a default transformation to make it look like conversational text
     const words = text.split(' ').filter(word => word.trim().length > 0);
     
-    if (words.length === 0) return text;
+    if (words.length === 0) return { text, isEncrypted: false };
     
     const conversationalStarters = [
       "I was thinking about",
@@ -109,7 +116,13 @@ export const encryptMessage = (text: string): string => {
   }
   
   // Capitalize first letter
-  return encryptedText.charAt(0).toUpperCase() + encryptedText.slice(1);
+  encryptedText = encryptedText.charAt(0).toUpperCase() + encryptedText.slice(1);
+  
+  return {
+    text: encryptedText,
+    isEncrypted: true,
+    allowedUsers
+  };
 };
 
 // Function to decrypt a message (transform back to original text)
@@ -184,4 +197,13 @@ export const isEncrypted = (text: string): boolean => {
   }
   
   return false;
+};
+
+// Check if user is allowed to decrypt a message
+export const canUserDecrypt = (userId: string, allowedUsers?: string[]): boolean => {
+  if (!allowedUsers || allowedUsers.length === 0) {
+    return true; // If no restrictions, anyone can decrypt
+  }
+  
+  return allowedUsers.includes(userId);
 };

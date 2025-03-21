@@ -7,7 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { encryptMessage, decryptMessage, isEncrypted } from "@/lib/encryption";
+import { 
+  encryptMessage, 
+  decryptMessage, 
+  isEncrypted, 
+  canUserDecrypt, 
+  EncryptionData 
+} from "@/lib/encryption";
 import { 
   ref, 
   push, 
@@ -17,22 +23,33 @@ import {
   orderByChild,
   limitToLast,
   get,
-  equalTo
+  equalTo,
+  set
 } from "firebase/database";
 import { database, auth } from "@/lib/firebase";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Lock, LockOpen, Send, LogOut, AlertTriangle, User, Users, Search } from "lucide-react";
+import { 
+  Lock, 
+  LockOpen, 
+  Send, 
+  LogOut, 
+  AlertTriangle, 
+  User, 
+  Users, 
+  Search,
+  UserCheck,
+  UserX
+} from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { UserSelector } from "@/components/UserSelector";
+import { 
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { UserSelector, ChatUser } from "@/components/UserSelector";
 
 interface Message {
   id: string;
@@ -42,12 +59,7 @@ interface Message {
   receiverId?: string;
   timestamp: number;
   isEncrypted: boolean;
-}
-
-interface ChatUser {
-  id: string;
-  displayName: string;
-  email?: string;
+  allowedUsers?: string[];
 }
 
 const Chat = () => {
@@ -56,6 +68,7 @@ const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [selectedUser, setSelectedUser] = useState<ChatUser | null>(null);
+  const [selectedDecryptUsers, setSelectedDecryptUsers] = useState<ChatUser[]>([]);
   const [decryptedMessages, setDecryptedMessages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
@@ -145,7 +158,8 @@ const Chat = () => {
               senderName: value.senderName,
               receiverId: value.receiverId,
               timestamp: value.timestamp,
-              isEncrypted: value.isEncrypted || false
+              isEncrypted: value.isEncrypted || false,
+              allowedUsers: value.allowedUsers || []
             };
             
             // Only show messages that are either from/to the current user and selected user
@@ -201,7 +215,6 @@ const Chat = () => {
       
       try {
         // This is set, not push, because we want to update the user data if it already exists
-        const { set } = require("firebase/database");
         set(userRef, userData);
       } catch (error) {
         console.error("Error registering user:", error);
@@ -209,23 +222,54 @@ const Chat = () => {
     }
   }, [currentUser]);
   
+  const handleToggleDecryptUser = (user: ChatUser) => {
+    setSelectedDecryptUsers(prevUsers => {
+      const userExists = prevUsers.some(u => u.id === user.id);
+      
+      if (userExists) {
+        toast.info(`${user.displayName} can no longer decrypt your messages`);
+        return prevUsers.filter(u => u.id !== user.id);
+      } else {
+        toast.success(`${user.displayName} can now decrypt your messages`);
+        return [...prevUsers, user];
+      }
+    });
+  };
+  
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!message.trim() || !currentUser) return;
     
     try {
-      const shouldEncrypt = !isEncrypted(message);
-      const textToSend = shouldEncrypt ? encryptMessage(message) : message;
+      // Get allowed user IDs from selected decrypt users
+      const allowedUserIds = selectedDecryptUsers.map(user => user.id);
       
-      await push(ref(database, "messages"), {
-        text: textToSend,
-        senderId: currentUser.uid,
-        senderName: currentUser.displayName || "Anonymous",
-        receiverId: selectedUser ? selectedUser.id : null,
-        timestamp: serverTimestamp(),
-        isEncrypted: shouldEncrypt
-      });
+      // Only encrypt if the message is not already encrypted
+      if (!isEncrypted(message)) {
+        const encryptionData = encryptMessage(message, allowedUserIds);
+        
+        await push(ref(database, "messages"), {
+          text: encryptionData.text,
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || "Anonymous",
+          receiverId: selectedUser ? selectedUser.id : null,
+          timestamp: serverTimestamp(),
+          isEncrypted: encryptionData.isEncrypted,
+          allowedUsers: encryptionData.allowedUsers
+        });
+      } else {
+        // Message is already encrypted, just send it
+        await push(ref(database, "messages"), {
+          text: message,
+          senderId: currentUser.uid,
+          senderName: currentUser.displayName || "Anonymous",
+          receiverId: selectedUser ? selectedUser.id : null,
+          timestamp: serverTimestamp(),
+          isEncrypted: true,
+          allowedUsers: allowedUserIds
+        });
+      }
       
       setMessage("");
     } catch (error: any) {
@@ -249,7 +293,17 @@ const Chat = () => {
     }
   };
   
-  const toggleDecrypt = (messageId: string, messageText: string, isMessageEncrypted: boolean) => {
+  const toggleDecrypt = (messageId: string, messageText: string, isMessageEncrypted: boolean, allowedUsers?: string[]) => {
+    // Check if current user is allowed to decrypt this message
+    if (currentUser && allowedUsers && allowedUsers.length > 0) {
+      const canDecrypt = canUserDecrypt(currentUser.uid, allowedUsers);
+      
+      if (!canDecrypt && isMessageEncrypted) {
+        toast.error("You don't have permission to decrypt this message");
+        return;
+      }
+    }
+    
     if (decryptedMessages[messageId]) {
       const updatedDecrypted = { ...decryptedMessages };
       delete updatedDecrypted[messageId];
@@ -257,7 +311,7 @@ const Chat = () => {
     } else {
       const decrypted = isMessageEncrypted 
         ? decryptMessage(messageText)
-        : encryptMessage(messageText);
+        : encryptMessage(messageText).text;
       
       setDecryptedMessages({
         ...decryptedMessages,
@@ -283,6 +337,59 @@ const Chat = () => {
   
   const handleSelectUser = (user: ChatUser | null) => {
     setSelectedUser(user);
+  };
+  
+  const getDecryptStatusIcon = (msg: Message) => {
+    if (!msg.isEncrypted) return null;
+    
+    if (!msg.allowedUsers || msg.allowedUsers.length === 0) {
+      return null;
+    }
+    
+    const isCurrentUserAllowed = currentUser && canUserDecrypt(currentUser.uid, msg.allowedUsers);
+    
+    if (msg.senderId === currentUser?.uid) {
+      if (msg.allowedUsers.length > 0) {
+        return (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="ml-2 px-1.5 py-0">
+                  <UserCheck className="h-3 w-3 text-green-500 mr-1" />
+                  <span className="text-xs">{msg.allowedUsers.length}</span>
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                {msg.allowedUsers.length} {msg.allowedUsers.length === 1 ? 'person' : 'people'} can decrypt
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      }
+    } else {
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="ml-2">
+                {isCurrentUserAllowed ? (
+                  <UserCheck className="h-3 w-3 text-green-500" />
+                ) : (
+                  <UserX className="h-3 w-3 text-red-500" />
+                )}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isCurrentUserAllowed 
+                ? "You can decrypt this message" 
+                : "You cannot decrypt this message"}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+    
+    return null;
   };
   
   if (!currentUser) {
@@ -338,34 +445,13 @@ const Chat = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-2">
-                <div className="space-y-1">
-                  <button 
-                    onClick={() => handleSelectUser(null)} 
-                    className={`w-full text-left p-2 rounded flex items-center gap-2 transition-colors ${!selectedUser ? 'bg-blue-100 dark:bg-blue-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
-                  >
-                    <Users className="h-4 w-4" />
-                    <span>General Chat</span>
-                  </button>
-                  
-                  {users.map(user => (
-                    <button 
-                      key={user.id}
-                      onClick={() => handleSelectUser(user)}
-                      className={`w-full text-left p-2 rounded flex items-center gap-2 transition-colors ${selectedUser?.id === user.id ? 'bg-blue-100 dark:bg-blue-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
-                    >
-                      <Avatar className="h-6 w-6">
-                        <AvatarFallback className="text-xs">{getInitials(user.displayName)}</AvatarFallback>
-                      </Avatar>
-                      <span className="truncate">{user.displayName}</span>
-                    </button>
-                  ))}
-                  
-                  {users.length === 0 && (
-                    <div className="text-center py-4 text-sm text-gray-500">
-                      No users available
-                    </div>
-                  )}
-                </div>
+                <UserSelector 
+                  users={users} 
+                  selectedUser={selectedUser} 
+                  onSelectUser={handleSelectUser}
+                  selectedDecryptUsers={selectedDecryptUsers}
+                  onToggleDecryptUser={handleToggleDecryptUser}
+                />
               </CardContent>
             </Card>
           </div>
@@ -387,6 +473,24 @@ const Chat = () => {
                       <span>General Chat</span>
                     </>
                   )}
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1 text-sm">
+                          <Lock className="h-4 w-4 text-blue-500" />
+                          <span>{selectedDecryptUsers.length} allowed to decrypt</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {selectedDecryptUsers.length === 0 
+                          ? "All users can decrypt your messages" 
+                          : `${selectedDecryptUsers.length} users can decrypt your messages`}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </CardTitle>
             </CardHeader>
@@ -414,6 +518,8 @@ const Chat = () => {
                     const isCurrentUser = msg.senderId === currentUser?.uid;
                     const displayText = decryptedMessages[msg.id] || msg.text;
                     const isDecrypted = !!decryptedMessages[msg.id];
+                    const canDecrypt = !msg.allowedUsers || msg.allowedUsers.length === 0 || 
+                                      (currentUser && canUserDecrypt(currentUser.uid, msg.allowedUsers));
                     
                     return (
                       <div 
@@ -431,7 +537,10 @@ const Chat = () => {
                             {!isCurrentUser && (
                               <span className="text-sm font-medium">{msg.senderName}</span>
                             )}
-                            <span className="text-xs text-gray-500">{formatTime(msg.timestamp)}</span>
+                            <span className="text-xs text-gray-500 flex items-center">
+                              {formatTime(msg.timestamp)}
+                              {getDecryptStatusIcon(msg)}
+                            </span>
                           </div>
                           
                           <div className={`
@@ -441,13 +550,19 @@ const Chat = () => {
                               : 'flex-row'
                             }
                           `}>
-                            <div className={`
-                              px-4 py-2 rounded-2xl break-words
-                              ${isCurrentUser 
-                                ? 'bg-blue-500 text-white rounded-tr-none' 
-                                : 'bg-gray-200 dark:bg-gray-700 rounded-tl-none'
-                              }
-                            `}>
+                            <div 
+                              className={`
+                                px-4 py-2 rounded-2xl break-words
+                                ${isCurrentUser 
+                                  ? 'bg-blue-500 text-white rounded-tr-none' 
+                                  : 'bg-gray-200 dark:bg-gray-700 rounded-tl-none'
+                                }
+                                ${!canDecrypt && msg.isEncrypted && !isDecrypted
+                                  ? 'opacity-60'
+                                  : ''
+                                }
+                              `}
+                            >
                               {displayText}
                             </div>
                             
@@ -458,17 +573,23 @@ const Chat = () => {
                                     variant="ghost" 
                                     size="icon" 
                                     className="h-7 w-7" 
-                                    onClick={() => toggleDecrypt(msg.id, msg.text, msg.isEncrypted)}
+                                    onClick={() => toggleDecrypt(msg.id, msg.text, msg.isEncrypted, msg.allowedUsers)}
+                                    disabled={!canDecrypt && msg.isEncrypted}
                                   >
                                     {isDecrypted ? (
                                       <LockOpen className="h-4 w-4 text-gray-500" />
                                     ) : (
-                                      <Lock className="h-4 w-4 text-gray-500" />
+                                      <Lock className={`h-4 w-4 ${!canDecrypt ? 'text-red-500' : 'text-gray-500'}`} />
                                     )}
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  {isDecrypted ? "Encrypt message" : "Decrypt message"}
+                                  {!canDecrypt && msg.isEncrypted
+                                    ? "You don't have permission to decrypt this message"
+                                    : isDecrypted 
+                                      ? "Encrypt message" 
+                                      : "Decrypt message"
+                                  }
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
@@ -496,9 +617,20 @@ const Chat = () => {
                   placeholder={`Type a message to ${selectedUser ? selectedUser.displayName : 'everyone'}...`}
                   className="flex-1 glass-input"
                 />
-                <Button type="submit" className="hover-scale">
-                  <Send className="h-4 w-4 mr-1" /> Send
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button type="submit" className="hover-scale">
+                        <Send className="h-4 w-4 mr-1" /> Send
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {selectedDecryptUsers.length === 0 
+                        ? "Message will be encrypted for all users" 
+                        : `Message will be encrypted for ${selectedDecryptUsers.length} selected users`}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </form>
             </CardFooter>
           </Card>
