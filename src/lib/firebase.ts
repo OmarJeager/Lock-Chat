@@ -1,7 +1,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getDatabase } from "firebase/database";
+import { getDatabase, connectDatabaseEmulator } from "firebase/database";
 import { getStorage } from "firebase/storage";
 
 // Firebase configuration
@@ -39,16 +39,23 @@ Firebase Realtime Database Rules (set these in Firebase Console):
         "senderId": { ".validate": "newData.isString() && newData.val() === auth.uid" },
         "senderName": { ".validate": "newData.isString()" },
         "timestamp": { ".validate": "newData.val() <= now" },
-        "isEncrypted": { ".validate": "newData.isBoolean()" }
+        "isEncrypted": { ".validate": "newData.isBoolean()" },
+        "receiverId": { ".validate": "newData.isString() || newData.val() === null" }
+      }
+    },
+    "users": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$userId": {
+        ".validate": "newData.hasChildren(['displayName', 'lastActive'])",
+        "displayName": { ".validate": "newData.isString()" },
+        "email": { ".validate": "newData.isString() || newData.val() === null" },
+        "lastActive": { ".validate": "newData.val() <= now" }
       }
     }
   }
 }
 */
-
-// Initialize database with connection persistence
-// This helps maintain connection when device goes offline temporarily
-import { connectDatabaseEmulator } from "firebase/database";
 
 // Check if we're in development mode and need to connect to emulators
 if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === "true") {
@@ -65,10 +72,18 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === "true"
 }
 
 // Enable database persistence to handle offline scenarios
-// This must be called before any database operations
+// We need to use the Firebase SDK import instead of require
 try {
-  const { setPersistenceEnabled } = require("firebase/database");
-  setPersistenceEnabled(database, true);
+  // Import dynamically to avoid ESM issues
+  import('firebase/database')
+    .then(module => {
+      if (module.setPersistenceEnabled) {
+        module.setPersistenceEnabled(database, true);
+      }
+    })
+    .catch(error => {
+      console.warn("Firebase database persistence couldn't be enabled:", error);
+    });
 } catch (error) {
   console.warn("Firebase database persistence couldn't be enabled:", error);
 }
