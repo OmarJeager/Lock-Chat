@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
@@ -15,11 +14,13 @@ import {
   serverTimestamp,
   query,
   orderByChild,
-  limitToLast 
+  limitToLast,
+  get
 } from "firebase/database";
-import { database } from "@/lib/firebase";
+import { database, auth } from "@/lib/firebase";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Lock, LockOpen, Send, LogOut } from "lucide-react";
+import { Lock, LockOpen, Send, LogOut, AlertTriangle } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface Message {
   id: string;
@@ -36,8 +37,28 @@ const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [decryptedMessages, setDecryptedMessages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  
+  useEffect(() => {
+    const testDbAccess = async () => {
+      if (!currentUser) return;
+      
+      try {
+        const testRef = ref(database, 'messages');
+        await get(testRef);
+        setDbError(null);
+      } catch (error: any) {
+        console.error("Database access error:", error);
+        if (error.code === "PERMISSION_DENIED") {
+          setDbError("You don't have permission to access the chat. Please check Firebase database rules.");
+        }
+      }
+    };
+    
+    testDbAccess();
+  }, [currentUser]);
   
   useEffect(() => {
     if (!currentUser) {
@@ -45,43 +66,49 @@ const Chat = () => {
       return;
     }
     
-    // Reference to the messages in the database
     const messagesRef = query(
       ref(database, "messages"),
       orderByChild("timestamp"),
       limitToLast(100)
     );
     
-    // Listen for new messages
     const unsubscribe = onValue(messagesRef, (snapshot) => {
-      const data = snapshot.val();
-      const loadedMessages: Message[] = [];
-      
-      if (data) {
-        Object.entries(data).forEach(([id, value]: [string, any]) => {
-          loadedMessages.push({
-            id,
-            text: value.text,
-            senderId: value.senderId,
-            senderName: value.senderName,
-            timestamp: value.timestamp,
-            isEncrypted: value.isEncrypted || false
-          });
-        });
+      try {
+        const data = snapshot.val();
+        const loadedMessages: Message[] = [];
         
-        // Sort messages by timestamp
-        loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
-        setMessages(loadedMessages);
+        if (data) {
+          Object.entries(data).forEach(([id, value]: [string, any]) => {
+            loadedMessages.push({
+              id,
+              text: value.text,
+              senderId: value.senderId,
+              senderName: value.senderName,
+              timestamp: value.timestamp,
+              isEncrypted: value.isEncrypted || false
+            });
+          });
+          
+          loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
+          setMessages(loadedMessages);
+        }
+        
+        setLoading(false);
+      } catch (error) {
+        console.error("Error loading messages:", error);
+        setLoading(false);
       }
-      
+    }, (error) => {
+      console.error("Database read error:", error);
+      if (error.code === "PERMISSION_DENIED") {
+        setDbError("You don't have permission to read messages. Please check Firebase database rules.");
+      }
       setLoading(false);
     });
     
-    // Cleanup listener on unmount
     return () => unsubscribe();
   }, [currentUser, navigate]);
   
-  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     const timer = setTimeout(() => {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -96,11 +123,9 @@ const Chat = () => {
     if (!message.trim() || !currentUser) return;
     
     try {
-      // Check if the message appears to be already encrypted
       const shouldEncrypt = !isEncrypted(message);
       const textToSend = shouldEncrypt ? encryptMessage(message) : message;
       
-      // Push the new message to Firebase
       await push(ref(database, "messages"), {
         text: textToSend,
         senderId: currentUser.uid,
@@ -109,11 +134,16 @@ const Chat = () => {
         isEncrypted: shouldEncrypt
       });
       
-      // Clear the input
       setMessage("");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sending message:", error);
-      toast.error("Failed to send message");
+      
+      if (error.code === "PERMISSION_DENIED") {
+        toast.error("Permission denied: Update Firebase database rules to allow writes");
+        setDbError("You don't have permission to send messages. Please check Firebase database rules.");
+      } else {
+        toast.error("Failed to send message");
+      }
     }
   };
   
@@ -128,15 +158,13 @@ const Chat = () => {
   
   const toggleDecrypt = (messageId: string, messageText: string, isMessageEncrypted: boolean) => {
     if (decryptedMessages[messageId]) {
-      // If already decrypted, remove the decryption
       const updatedDecrypted = { ...decryptedMessages };
       delete updatedDecrypted[messageId];
       setDecryptedMessages(updatedDecrypted);
     } else {
-      // If not decrypted, decrypt it
       const decrypted = isMessageEncrypted 
         ? decryptMessage(messageText)
-        : encryptMessage(messageText); // If not encrypted, "decrypt" will actually encrypt
+        : encryptMessage(messageText);
       
       setDecryptedMessages({
         ...decryptedMessages,
@@ -182,6 +210,27 @@ const Chat = () => {
       </header>
 
       <main className="flex-1 container mx-auto py-6 px-4 flex flex-col">
+        {dbError && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Database Error</AlertTitle>
+            <AlertDescription>
+              {dbError}
+              <p className="mt-2 text-sm">
+                Please update your Firebase Realtime Database rules in the Firebase Console to:
+                <pre className="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs overflow-auto">
+                  {`{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null"
+  }
+}`}
+                </pre>
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
+        
         <Card className="flex-1 glass-panel flex flex-col overflow-hidden animate-fade-in max-w-4xl mx-auto w-full">
           <CardHeader className="border-b">
             <CardTitle className="text-center">

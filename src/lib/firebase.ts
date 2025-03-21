@@ -24,4 +24,53 @@ export const auth = getAuth(app);
 export const database = getDatabase(app);
 export const storage = getStorage(app);
 
+/* 
+Firebase Realtime Database Rules (set these in Firebase Console):
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "messages": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$messageId": {
+        ".validate": "newData.hasChildren(['text', 'senderId', 'senderName', 'timestamp'])",
+        "text": { ".validate": "newData.isString()" },
+        "senderId": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+        "senderName": { ".validate": "newData.isString()" },
+        "timestamp": { ".validate": "newData.val() <= now" },
+        "isEncrypted": { ".validate": "newData.isBoolean()" }
+      }
+    }
+  }
+}
+*/
+
+// Initialize database with connection persistence
+// This helps maintain connection when device goes offline temporarily
+import { connectDatabaseEmulator } from "firebase/database";
+
+// Check if we're in development mode and need to connect to emulators
+if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === "true") {
+  // Connect to emulators if running locally
+  const authEmulatorHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST;
+  const databaseEmulatorHost = import.meta.env.VITE_FIREBASE_DATABASE_EMULATOR_HOST;
+  
+  if (authEmulatorHost) {
+    const [host, port] = authEmulatorHost.split(":");
+    if (host && port) {
+      connectDatabaseEmulator(database, host, Number(port));
+    }
+  }
+}
+
+// Enable database persistence to handle offline scenarios
+// This must be called before any database operations
+try {
+  const { setPersistenceEnabled } = require("firebase/database");
+  setPersistenceEnabled(database, true);
+} catch (error) {
+  console.warn("Firebase database persistence couldn't be enabled:", error);
+}
+
 export default app;
