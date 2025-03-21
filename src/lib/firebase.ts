@@ -74,18 +74,18 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === "true"
 // Enable database persistence to handle offline scenarios
 // We need to use the Firebase SDK import instead of require
 try {
-  // Import dynamically to avoid ESM issues
+  // Import dynamically to avoid ESM issues - removing setPersistenceEnabled which doesn't exist
   import('firebase/database')
     .then(module => {
-      if (module.setPersistenceEnabled) {
-        module.setPersistenceEnabled(database, true);
-      }
+      console.log("Firebase database module loaded successfully");
+      // NOTE: setPersistenceEnabled is not available in the current Firebase version
+      // Let the database handle caching automatically
     })
     .catch(error => {
-      console.warn("Firebase database persistence couldn't be enabled:", error);
+      console.warn("Firebase database import error:", error);
     });
 } catch (error) {
-  console.warn("Firebase database persistence couldn't be enabled:", error);
+  console.warn("Firebase database module loading error:", error);
 }
 
 export default app;
