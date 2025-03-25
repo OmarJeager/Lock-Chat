@@ -76,6 +76,7 @@ const Chat = () => {
   const [dbError, setDbError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const [viewedProfile, setViewedProfile] = useState<ChatUser | null>(null);
   
   useEffect(() => {
     const testDbAccess = async () => {
@@ -346,6 +347,7 @@ const Chat = () => {
   
   const handleSelectUser = (user: ChatUser | null) => {
     setSelectedUser(user);
+    setViewedProfile(user); // Set the profile being viewed
   };
   
   const getDecryptStatusIcon = (msg: Message) => {
@@ -452,6 +454,46 @@ const Chat = () => {
     });
   }, [messages, currentUser, selectedUser]);
 
+  // Function to view the current user's profile
+const handleViewMyProfile = () => {
+  setViewedProfile({
+    id: currentUser.uid,
+    displayName: currentUser.displayName || "Anonymous",
+    email: currentUser.email,
+  });
+};
+
+// JSX for the profile view
+const renderProfileView = () => {
+  if (!viewedProfile) return null;
+
+  return (
+    <Card className="glass-panel p-4 mb-4">
+      <CardHeader>
+        <CardTitle>Profile Information</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col gap-2">
+          <div>
+            <strong>Name:</strong> {viewedProfile.displayName}
+          </div>
+          <div>
+            <strong>Email:</strong> {viewedProfile.email}
+          </div>
+        </div>
+      </CardContent>
+      {viewedProfile.id === currentUser.uid && (
+        <CardFooter>
+          <Button variant="outline" onClick={handleLogout}>
+            <LogOut className="h-4 w-4 mr-2" />
+            Logout
+          </Button>
+        </CardFooter>
+      )}
+    </Card>
+  );
+};
+
   if (!currentUser) {
     return <div>Redirecting...</div>;
   }
@@ -465,9 +507,9 @@ const Chat = () => {
             <span className="text-sm text-gray-600 dark:text-gray-300">
               Signed in as {currentUser.displayName || currentUser.email}
             </span>
-            <Button variant="outline" size="sm" onClick={handleLogout} className="hover-scale">
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign Out
+            <Button variant="outline" size="sm" onClick={handleViewMyProfile} className="hover-scale">
+              <User className="h-4 w-4 mr-2" />
+              My Profile
             </Button>
           </div>
         </div>
@@ -495,6 +537,8 @@ const Chat = () => {
           </Alert>
         )}
         
+        {renderProfileView()}
+
         <div className="flex gap-4 max-w-4xl mx-auto w-full">
           <div className="w-1/4">
             <Card className="glass-panel h-full">
