@@ -39,7 +39,8 @@ import {
   UserCheck,
   UserX,
   Trash,
-  Trash2
+  Trash2,
+  Eye
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
@@ -62,6 +63,9 @@ interface Message {
   timestamp: number;
   isEncrypted: boolean;
   allowedUsers?: string[];
+  seen?: boolean;
+  readBy?: string[]; // List of user IDs who have read the message
+  deliveredTo?: string[]; // List of user IDs who received the message
 }
 
 const Chat = () => {
@@ -454,6 +458,64 @@ const Chat = () => {
     });
   }, [messages, currentUser, selectedUser]);
 
+  useEffect(() => {
+    if (!currentUser || !selectedUser) return;
+
+    messages.forEach(async (msg) => {
+      if (msg.receiverId === currentUser.uid && !msg.seen) {
+        try {
+          const messageRef = ref(database, `messages/${msg.id}`);
+          
+          // Mark as seen
+          await set(ref(database, `messages/${msg.id}/seen`), true);
+  
+          // Add current user to readBy list
+          const readByRef = ref(database, `messages/${msg.id}/readBy`);
+          const snapshot = await get(readByRef);
+          const readBy = snapshot.val() || [];
+          if (!readBy.includes(currentUser.uid)) {
+            await set(readByRef, [...readBy, currentUser.uid]);
+          }
+        } catch (error) {
+          console.error("Error updating read status:", error);
+        }
+      }
+    });
+  }, [messages, currentUser, selectedUser]);
+
+  useEffect(() => {
+    if (!currentUser || !selectedUser) return;
+
+    messages.forEach(async (msg) => {
+      if (msg.receiverId === currentUser.uid && !msg.seen) {
+        try {
+          const messageRef = ref(database, `messages/${msg.id}`);
+
+          // Mark as seen
+          await set(ref(database, `messages/${msg.id}/seen`), true);
+
+          // Add current user to readBy list
+          const readByRef = ref(database, `messages/${msg.id}/readBy`);
+          const snapshot = await get(readByRef);
+          const readBy = snapshot.val() || [];
+          if (!readBy.includes(currentUser.uid)) {
+            await set(readByRef, [...readBy, currentUser.uid]);
+          }
+
+          // Add current user to deliveredTo list
+          const deliveredToRef = ref(database, `messages/${msg.id}/deliveredTo`);
+          const deliveredSnapshot = await get(deliveredToRef);
+          const deliveredTo = deliveredSnapshot.val() || [];
+          if (!deliveredTo.includes(currentUser.uid)) {
+            await set(deliveredToRef, [...deliveredTo, currentUser.uid]);
+          }
+        } catch (error) {
+          console.error("Error updating message status:", error);
+        }
+      }
+    });
+  }, [messages, currentUser, selectedUser]);
+
   // Function to view the current user's profile
 const handleViewMyProfile = () => {
   setViewedProfile({
@@ -735,6 +797,28 @@ const renderProfileView = () => {
                           >
                             <AlertTriangle className="h-4 w-4 text-yellow-500" />
                           </Button>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => console.log(`Read by: ${msg.readBy?.join(", ") || "None"}`)}
+                                >
+                                  <Eye className="h-4 w-4 text-blue-500" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <div>
+                                  <strong>Delivered to:</strong> {msg.deliveredTo?.join(", ") || "None"}
+                                </div>
+                                <div>
+                                  <strong>Read by:</strong> {msg.readBy?.join(", ") || "None"}
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       </div>
                     );
