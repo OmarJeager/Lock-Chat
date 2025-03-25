@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { redirect, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +37,9 @@ import {
   Users, 
   Search,
   UserCheck,
-  UserX
+  UserX,
+  Trash,
+  Trash2
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
@@ -50,6 +51,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { UserSelector, ChatUser } from "@/components/UserSelector";
+import { ZAxis } from "recharts";
 
 interface Message {
   id: string;
@@ -159,7 +161,8 @@ const Chat = () => {
               receiverId: value.receiverId,
               timestamp: value.timestamp,
               isEncrypted: value.isEncrypted || false,
-              allowedUsers: value.allowedUsers || []
+              allowedUsers: value.allowedUsers || [],
+              seen: value.seen || false, // Include the seen property
             };
             
             // Only show messages that are either from/to the current user and selected user
@@ -262,7 +265,13 @@ const Chat = () => {
         // Message is already encrypted, just send it
         await push(ref(database, "messages"), {
           text: message,
-          senderId: currentUser.uid,
+          _senderId: currentUser.uid,
+          get senderId() {
+            return this._senderId;
+          },
+          set senderId(value) {
+            this._senderId = value;
+          },
           senderName: currentUser.displayName || "Anonymous",
           receiverId: selectedUser ? selectedUser.id : null,
           timestamp: serverTimestamp(),
@@ -392,6 +401,57 @@ const Chat = () => {
     return null;
   };
   
+  const handleDeleteMessage = async (messageId: string, deleteForEveryone: boolean) => {
+    if (!currentUser) return;
+  
+    try {
+      const messageRef = ref(database, `messages/${messageId}`);
+      if (deleteForEveryone) {
+        // Delete the message for everyone
+        await set(messageRef, null);
+        toast.success("Message deleted for everyone");
+      } else {
+        // Mark the message as deleted for the current user
+        await set(ref(database, `messages/${messageId}/deletedFor/${currentUser.uid}`), true);
+        toast.success("Message deleted for you");
+      }
+    } catch (error) {
+      console.error("Error deleting message:", error);
+      toast.error("Failed to delete message");
+    }
+  };
+
+  const handleSignalMessage = async (messageId: string) => {
+    if (!currentUser) return;
+  
+    try {
+      const messageRef = ref(database, `messages/${messageId}/signaled`);
+      await set(messageRef, true);
+      toast.success("Message signaled");
+    } catch (error) {
+      console.error("Error signaling message:", error);
+      toast.error("Failed to signal message");
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser || !selectedUser) return;
+
+    messages.forEach(async (msg) => {
+      if (
+        msg.receiverId === currentUser.uid && // Message is for the current user
+        !msg.seen // Message has not been marked as seen
+      ) {
+        try {
+          const messageRef = ref(database, `messages/${msg.id}/seen`);
+          await set(messageRef, true); // Mark the message as seen
+        } catch (error) {
+          console.error("Error updating seen status:", error);
+        }
+      }
+    });
+  }, [messages, currentUser, selectedUser]);
+
   if (!currentUser) {
     return <div>Redirecting...</div>;
   }
@@ -540,6 +600,9 @@ const Chat = () => {
                             <span className="text-xs text-gray-500 flex items-center">
                               {formatTime(msg.timestamp)}
                               {getDecryptStatusIcon(msg)}
+                              {msg.seen && msg.senderId === currentUser?.uid && (
+                                <span className="text-xs text-green-500">Seen</span>
+                              )}
                             </span>
                           </div>
                           
@@ -601,6 +664,34 @@ const Chat = () => {
                             <AvatarFallback>{getInitials(currentUser.displayName || "You")}</AvatarFallback>
                           </Avatar>
                         )}
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handleDeleteMessage(msg.id, false)} // Delete for yourself
+                          >
+                            <Trash className="h-4 w-4 text-gray-500" />
+                          </Button>
+                          {msg.senderId === currentUser?.uid && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleDeleteMessage(msg.id, true)} // Delete for everyone
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handleSignalMessage(msg.id)}
+                          >
+                            <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
