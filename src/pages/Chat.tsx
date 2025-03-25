@@ -81,6 +81,9 @@ const Chat = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const [viewedProfile, setViewedProfile] = useState<ChatUser | null>(null);
+  const [mentioning, setMentioning] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [filteredUsers, setFilteredUsers] = useState<ChatUser[]>([]);
   
   useEffect(() => {
     const testDbAccess = async () => {
@@ -556,6 +559,36 @@ const renderProfileView = () => {
   );
 };
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setMessage(value);
+  
+    const atIndex = value.lastIndexOf("@");
+    if (atIndex !== -1) {
+      const query = value.slice(atIndex + 1);
+      setMentioning(true);
+      setMentionQuery(query);
+  
+      // Filter users based on the query
+      const matches = users.filter((user) =>
+        user.displayName.toLowerCase().includes(query.toLowerCase())
+      );
+      setFilteredUsers(matches);
+    } else {
+      setMentioning(false);
+      setMentionQuery("");
+    }
+  };
+
+  const handleUserSelect = (user: ChatUser) => {
+    const atIndex = message.lastIndexOf("@");
+    const newMessage =
+      message.slice(0, atIndex + 1) + user.displayName + " " + message.slice(atIndex + 1 + mentionQuery.length);
+    setMessage(newMessage);
+    setMentioning(false);
+    setMentionQuery("");
+  };
+
   if (!currentUser) {
     return <div>Redirecting...</div>;
   }
@@ -832,10 +865,27 @@ const renderProfileView = () => {
               <form onSubmit={handleSendMessage} className="w-full flex gap-2">
                 <Input
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={handleInputChange}
                   placeholder={`Type a message to ${selectedUser ? selectedUser.displayName : 'everyone'}...`}
                   className="flex-1 glass-input"
                 />
+                {mentioning && (
+                  <div className="absolute bg-white border rounded shadow-md max-h-40 overflow-y-auto z-10">
+                    {filteredUsers.length > 0 ? (
+                      filteredUsers.map((user) => (
+                        <div
+                          key={user.id}
+                          className="p-2 hover:bg-gray-100 cursor-pointer"
+                          onClick={() => handleUserSelect(user)}
+                        >
+                          {user.displayName}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-2 text-gray-500">No users found</div>
+                    )}
+                  </div>
+                )}
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
